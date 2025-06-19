@@ -74,7 +74,7 @@ bool hasTOF = false;
 
 //---- OneWire ----
 // data cable connected to D4 pin
-#define ONE_WIRE_BUS GPIO_NUM_33
+#define ONE_WIRE_BUS GPIO_NUM_40
 
 union busAddress {
   byte raw[8];
@@ -444,7 +444,7 @@ void setup() {
     sensors = 1;
   }
 
-  uint16_t owDelay = 800;
+  uint16_t owDelay = 820;
 
   //---- ToF ----
   if ( hasTOF) {
@@ -473,7 +473,8 @@ void setup() {
     //tof.startOneshotRanging();
     tof.startRanging();
 
-    uint16_t sum = 0, sample = 0;
+    uint32_t sum = 0;
+    uint16_t sample = 0;
     uint16_t msmtsTaken = 0;
 
     localToF->dist = -1;
@@ -482,7 +483,7 @@ void setup() {
         sample = tof.getDistance();
         tof.clearInterrupt();
 
-        sum += sample;
+        sum += (uint32_t) sample;
         msmtsTaken++;
 
         Serial.print(F("Range: "));
@@ -505,6 +506,33 @@ void setup() {
       localToF->dist = -1;
     }
 
+    int signalRate = tof.getSignalRate();
+    Serial.print("Signal rate: ");
+    Serial.println(signalRate);
+
+    byte rangeStatus = tof.getRangeStatus();
+    Serial.print("Range Status: ");
+      //Make it human readable
+    switch (rangeStatus) {
+      case 0:
+        Serial.print("Good");
+        break;
+      case 1:
+        Serial.print("Sigma fail");
+        break;
+      case 2:
+        Serial.print("Signal fail");
+        break;
+      case 7:
+        Serial.print("Wrapped target fail");
+        break;
+      default:
+        Serial.print("Unknown: ");
+        Serial.print(rangeStatus);
+        break;
+    }
+    Serial.println();
+
     uint16_t hist = getAveragedTof( &history.data);
     Serial.printf( "Range %i [%i] [%i]\n", localToF->dist, hist, localToF->dist - hist);
 
@@ -519,6 +547,9 @@ void setup() {
 
     display.setFont(ArialMT_Plain_10);
     sprintAt( 5, 38, "----");
+
+    display.setFont(ArialMT_Plain_16);
+    sprintAt( 88, 48, "----");
   }
 
   sensor = 0;
@@ -594,7 +625,9 @@ void setup() {
   }
   if ( sensor == 0) {
     Serial.println( "no DS18x20");
-    sprintAt( 5, 14, "C     --.-");
+  
+    display.setFont(ArialMT_Plain_10);
+    sprintAt( 5, 14, "C    --.-");
   }
 
   //---- BME ----
@@ -604,7 +637,7 @@ void setup() {
     float bme_hmd = bme.readHumidity() * 10.0;
     float bme_prs = bme.readPressure() / 10.0;
 
-    //Serial.printf( "temp/humid/press [ %f %f %f ]\n", bme_temp, bme_hmd, bme_prs);
+    Serial.printf( "temp/humid/press [ %f %f %f ]\n", bme_temp, bme_hmd, bme_prs);
 
     localBME = (LoraBME280 *) up.addSensor( SensorData::SensorType::BME280, sizeof( LoraBME280));
 
@@ -612,12 +645,14 @@ void setup() {
     localBME->hmd = (uint16_t) bme_hmd;
     localBME->prs = (uint16_t) bme_prs;
 
+    display.setFont(ArialMT_Plain_10);
     sprintAt( 5, 25, "C    % 2.1f", (float)localBME->temp/10);
     sprintAt( 72, 14, "hum%%   % 4d", localBME->hmd/10);
     sprintAt( 72, 25, "mbar    % 4d", localBME->prs/10);
   } else {
     Serial.println( "no BME280");
 
+    display.setFont(ArialMT_Plain_10);
     sprintAt( 5, 25, "C    --.-");
     sprintAt( 72, 14, "hum%%    ---");
     sprintAt( 72, 25, "mbar     ----");
@@ -713,6 +748,9 @@ void setup() {
       }
     } else {
       Serial.println(F("<MAC commands only>"));
+
+      display.setFont(ArialMT_Plain_16);
+      sprintAt( 24, 48, "----");
     }
 
     dumpDownlinkStats( state);
@@ -737,12 +775,47 @@ void handleDownlink( SensorData *down) {
 
   while( index < down->eod) {
     switch( down->buffer[ index]) {
+        case SensorData::SensorType::EOL:
+          index += sizeof( LoraSensor);
+          Serial.println( "  eol");
+        break;
+
+        case SensorData::SensorType::ID:
+          index += sizeof( LoraID);
+          Serial.println( "  id");
+        break;
+
+        case SensorData::SensorType::NODE:
+          index += sizeof( LoraNode);
+          Serial.println( "  node");
+        break;
+
+        case SensorData::SensorType::DS18B20:
+          index += sizeof( LoraDS18B20);
+          Serial.println( "  ds18b20");
+        break;
+
+        case SensorData::SensorType::BME280:
+          index += sizeof( LoraBME280);
+          Serial.println( "  bme280");
+        break;
+
         case SensorData::SensorType::TOF:
           remoteToF = (LoraToF *) &down->buffer[index];
           index += sizeof( LoraToF);
 
           localNode->meta = remoteToF->meta & STS_MMASK;
           Serial.printf( "meta [%i]\n", localNode->meta);
+        break;
+
+        case SensorData::SensorType::GPS:
+          index += sizeof( LoraGps);
+          Serial.println( "  gps");
+        break;
+
+        case SensorData::SensorType::FILL:
+          index += sizeof( LoraFill);
+          Serial.println( "  fill");
         break;
 
         default:
@@ -807,7 +880,7 @@ void goToSleep() {
 }
 
 uint32_t blinkMode( uint8_t meta, uint32_t delayMs) {
-  uint8_t loops = 80;
+  uint8_t loops = 100;
   Serial.printf( "metamode [%02x]\n", meta);
 
   while( loops > 0) {
