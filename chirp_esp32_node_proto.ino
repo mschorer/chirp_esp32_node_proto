@@ -208,7 +208,7 @@ uint16_t getAveragedTof( dataMem* history) {
 
 //---- Code ----
 
-void sprintAt( int16_t x, int16_t y, char *fmt, ...) {
+void sprintAt( int16_t x, int16_t y, const char *fmt, ...) {
   char gstring[48];
   va_list args;
 
@@ -228,7 +228,7 @@ void drawHBar( uint8_t x,  uint8_t y, uint8_t w, uint8_t h, uint8_t fill) {
   display.drawRect( x+fill, y, w-fill, h);
 }
 
-void drawNode( uint8_t x, uint8_t y, LoraNode *node, char* name) {
+void drawNode( uint8_t x, uint8_t y, LoraNode *node, const char* name) {
   uint8_t batLevel = 0;
   char status = '.';
 
