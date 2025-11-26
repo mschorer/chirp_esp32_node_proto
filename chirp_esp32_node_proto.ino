@@ -74,7 +74,7 @@ bool hasTOF = false;
 
 //---- OneWire ----
 // data cable connected to D4 pin
-#define ONE_WIRE_BUS GPIO_NUM_40
+#define ONE_WIRE_BUS GPIO_NUM_3
 
 union busAddress {
   byte raw[8];
@@ -230,6 +230,7 @@ void drawHBar( uint8_t x,  uint8_t y, uint8_t w, uint8_t h, uint8_t fill) {
 
 void drawNode( uint8_t x, uint8_t y, LoraNode *node, char* name) {
   uint8_t batLevel = 0;
+  char status = '.';
 
   if ( node) {
     if ( node->vbat > 0) {
@@ -238,6 +239,12 @@ void drawNode( uint8_t x, uint8_t y, LoraNode *node, char* name) {
     } else {
         sprintAt( 40, y, "-.--V" );
     }
+    switch( node->meta & STS_MMASK) {
+      case STS_EMERG: status = '*'; break;
+      case STS_ALERT: status = '+'; break;
+      case STS_RELAX: status = '-'; break;
+    }
+    sprintAt( 30, y, "%c", status);
   }
   drawHBar( 78, y+1, 50, 5, batLevel);
   sprintAt( 0, y, name);
@@ -772,12 +779,16 @@ void loop() {
 
 void handleDownlink( SensorData *down) {
   uint8_t index = 0;
+  LoraSensor* remoteStatus;
 
   while( index < down->eod) {
     switch( down->buffer[ index]) {
-        case SensorData::SensorType::EOL:
+        case SensorData::SensorType::STATUS:
+          remoteStatus = (LoraSensor *) &down->buffer[index];
           index += sizeof( LoraSensor);
-          Serial.println( "  eol");
+
+          localNode->meta = remoteStatus->meta;
+          Serial.printf( "status [%i]\n", localNode->meta);
         break;
 
         case SensorData::SensorType::ID:
@@ -803,9 +814,6 @@ void handleDownlink( SensorData *down) {
         case SensorData::SensorType::TOF:
           remoteToF = (LoraToF *) &down->buffer[index];
           index += sizeof( LoraToF);
-
-          localNode->meta = remoteToF->meta & STS_MMASK;
-          Serial.printf( "meta [%i]\n", localNode->meta);
         break;
 
         case SensorData::SensorType::GPS:
@@ -880,51 +888,32 @@ void goToSleep() {
 }
 
 uint32_t blinkMode( uint8_t meta, uint32_t delayMs) {
-  uint8_t loops = 100;
-  Serial.printf( "metamode [%02x]\n", meta);
+  uint8_t loops = 0;
+  //Serial.printf( "metamode [%02x]\n", meta);
 
-  while( loops > 0) {
+  while( loops < 64) {
     //Serial.printf("(%d)", loops);
 
-    if ( loops % 2) {
-      heltec_led(LED_OFF);
-      //Serial.printf("off\n", loops);
-    } else {
-      switch( meta) {
-        case STS_EMERG:
-          if ( loops % 2 == 0) {
-            heltec_led( LED_MID);
-            //Serial.printf("on\n", loops);
-          }
+    switch( loops % 8) {
+      case 6:
+        if ( meta < STS_EMERG) break;
+      case 4:
+        if ( meta < STS_ALERT) break;
+      case 2:
+        if ( meta < STS_RELAX) break;
+      case 0:
+        //Serial.printf( "[%i]", loops);
+        heltec_led( LED_LOW);
         break;
 
-        case STS_ALERT:
-          if ( loops % 4 == 0) {
-            heltec_led( LED_MID);
-            //Serial.printf("on\n", loops);
-          }
-          break;
-          
-        case STS_RELAX:
-          if ( loops % 8 == 0) {
-            heltec_led( LED_MID);
-            //Serial.printf("on\n", loops);
-          }
-          break;
-          
-        case STS_DCARE:
-          if ( loops % 16 == 0) {
-            heltec_led( LED_MID);
-            //Serial.printf("on\n", loops);
-          }
-          break;
-      }
-
+      default:
+        heltec_led(LED_OFF);
+        //Serial.printf( "#%i#", loops);
     }
 
-    loops--;
-    delayMs -= 50;
-    delay( 50);
+    loops++;
+    delayMs -= 100;
+    delay( 100);
   }
 
   return delayMs;
@@ -974,10 +963,18 @@ String stateDecode(const int16_t result) {
     return "RADIOLIB_ERR_COMMAND_QUEUE_ITEM_NOT_FOUND";
   case RADIOLIB_ERR_JOIN_NONCE_INVALID:
     return "RADIOLIB_ERR_JOIN_NONCE_INVALID";
+/*
   case RADIOLIB_ERR_N_FCNT_DOWN_INVALID:
     return "RADIOLIB_ERR_N_FCNT_DOWN_INVALID";
   case RADIOLIB_ERR_A_FCNT_DOWN_INVALID:
     return "RADIOLIB_ERR_A_FCNT_DOWN_INVALID";
+*/
+
+  case RADIOLIB_ERR_MIC_MISMATCH:
+ 	  return "The downlink MIC could not be verified (incorrect key or invalid FCnt)";
+  case RADIOLIB_ERR_MULTICAST_FCNT_INVALID:
+ 	  return "Multicast frame counter is invalid (outside bounds).";
+
   case RADIOLIB_ERR_DWELL_TIME_EXCEEDED:
     return "RADIOLIB_ERR_DWELL_TIME_EXCEEDED";
   case RADIOLIB_ERR_CHECKSUM_MISMATCH:
@@ -1038,7 +1035,7 @@ void dumpDownlinkStats(const int16_t state) {
   }
 
   uint32_t networkTime = 0;
-  uint8_t fracSecond = 0;
+  uint16_t fracSecond = 0;
   if(node->getMacDeviceTimeAns(&networkTime, &fracSecond, true) == RADIOLIB_ERR_NONE) {
     Serial.print(F("[LoRaWAN] DeviceTime Unix:\t"));
     Serial.println(networkTime);
