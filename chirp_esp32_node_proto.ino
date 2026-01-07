@@ -73,7 +73,7 @@
 bool hasTOF = false;
 
 //---- OneWire ----
-// data cable connected to D4 pin
+// data cable connected to GPIO3 pin
 #define ONE_WIRE_BUS GPIO_NUM_3
 
 union busAddress {
@@ -136,6 +136,7 @@ SensorData down( DOWN_SIZE);
 SensorData up( 128);
 
 LoraNode *localNode;
+LoraID localId;
 
   //LoraGps gps;
 LoraBME280 *localBME;
@@ -208,7 +209,7 @@ uint16_t getAveragedTof( dataMem* history) {
 
 //---- Code ----
 
-void sprintAt( int16_t x, int16_t y, char *fmt, ...) {
+void sprintAt( int16_t x, int16_t y, const char *fmt, ...) {
   char gstring[48];
   va_list args;
 
@@ -547,8 +548,13 @@ void setup() {
     sprintAt( 88, 48, "% 4d", localToF->dist);
 
 #endif
-    display.setFont(ArialMT_Plain_10);
-    sprintAt( 0, 38, "% 4d", history.data.remote);
+    if ( history.data.remote) {
+      display.setFont(ArialMT_Plain_10);
+      sprintAt( 0, 38, "% 4d", history.data.remote);
+    } else {
+      display.setFont(ArialMT_Plain_10);
+      sprintAt( 5, 38, "----");
+    }
   } else {
     Serial.println("skipping ToF");
 
@@ -743,19 +749,19 @@ void setup() {
       arrayDump(down.buffer, down.eod);
 
       handleDownlink( &down);
-
-      if ( remoteToF) {
-        Serial.printf( "TOF: %i (%i)\n", remoteToF->dist, history.data.remote);
-
-        display.setFont(ArialMT_Plain_16);
-        sprintAt( 24, 48, "%4d", remoteToF->dist);
-
-        history.data.remote = remoteToF->dist;
-        persistData( &history);
-      }
     } else {
       Serial.println(F("<MAC commands only>"));
+    }
 
+    if ( remoteToF) {
+      display.setFont(ArialMT_Plain_16);
+      sprintAt( 24, 48, "%4d", remoteToF->dist);
+
+      history.data.remote = remoteToF->dist;
+      persistData( &history);
+
+      remoteToF = 0;
+    } else {
       display.setFont(ArialMT_Plain_16);
       sprintAt( 24, 48, "----");
     }
@@ -788,12 +794,17 @@ void handleDownlink( SensorData *down) {
           index += sizeof( LoraSensor);
 
           localNode->meta = remoteStatus->meta;
-          Serial.printf( "status [%i]\n", localNode->meta);
+          Serial.printf( "  status [%02x:%02x]\n", STS_MSHIFT( localNode->meta), localNode->meta & STS_UDDMASK);
         break;
 
         case SensorData::SensorType::ID:
+          memcpy( &localId, &down->buffer[index], sizeof( LoraID));
           index += sizeof( LoraID);
-          Serial.println( "  id");
+
+          char lname[7];
+          memset( &lname, 0, sizeof( LoraID));
+          strncpy( lname, (char *) &localId.id, sizeof( LoraID));
+          Serial.printf( "  id [%s]\n", lname);
         break;
 
         case SensorData::SensorType::NODE:
@@ -814,6 +825,7 @@ void handleDownlink( SensorData *down) {
         case SensorData::SensorType::TOF:
           remoteToF = (LoraToF *) &down->buffer[index];
           index += sizeof( LoraToF);
+          Serial.printf( "  ToF [%i]\n", remoteToF->dist);
         break;
 
         case SensorData::SensorType::GPS:
@@ -827,7 +839,7 @@ void handleDownlink( SensorData *down) {
         break;
 
         default:
-          Serial.println( "xTra data.");
+          Serial.println( "  xTra data.");
           index = down->eod;
     }
   };
