@@ -262,6 +262,8 @@ void setup() {
   char sensorId[16];
   char sensorType[8];
 
+  Serial.printf("esp32_node_proto\n");
+
   //---- start ----
   heltec_setup();
   heltec_led(LED_LOW);
